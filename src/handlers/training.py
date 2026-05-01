@@ -1,5 +1,4 @@
 import json
-from datetime import datetime
 
 from telegram import Update
 from telegram.ext import CommandHandler, ContextTypes, ConversationHandler, MessageHandler, filters
@@ -7,46 +6,63 @@ from telegram.ext import CommandHandler, ContextTypes, ConversationHandler, Mess
 from src.database import add_training, create_signup_sheet, get_trainings, is_admin, log_attendance, update_training_signup
 from src.utils.formatting import md
 from src.utils.security import sanitize_text
-from src.utils.time import now_local
+from src.utils.time import STORED_FMT, _parse_natural_date, friendly_date_hint, now_local
 from src.views.keyboards import get_signup_keyboard
 from src.views.templates import format_signup_card
 
 T_DATE, T_LOC, T_FOCUS = range(3)
-DATE_FMT = "%Y-%m-%d %H:%M"
+TRAINING_USER_DATA_KEYS = ("t_date", "t_loc")
 
 
-async def add_training_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+def _clear_training_data(ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    for key in TRAINING_USER_DATA_KEYS:
+        ctx.user_data.pop(key, None)
+
+
+async def add_training_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("Admins only.")
         return ConversationHandler.END
 
     await update.message.reply_text(
-        "*New Training Session*\nEnter date and time (e.g. `2026-05-14 19:00`):",
+        "*New Training Session*\n" + friendly_date_hint(),
         parse_mode="Markdown",
     )
     return T_DATE
 
 
-async def t_date(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    date_str = update.message.text.strip()
-    try:
-        datetime.strptime(date_str, DATE_FMT)
-    except ValueError:
-        await update.message.reply_text("Invalid format. Try `YYYY-MM-DD HH:MM`:", parse_mode="Markdown")
+async def t_date(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    parsed = _parse_natural_date(update.message.text)
+    if not parsed:
+        await update.message.reply_text(
+            "Couldn't understand that date.\n" + friendly_date_hint(),
+            parse_mode="Markdown",
+        )
+        return T_DATE
+    if parsed < now_local():
+        await update.message.reply_text(
+            f"That date ({parsed.strftime(STORED_FMT)}) is in the past. "
+            "Please enter a future training date:",
+            parse_mode="Markdown",
+        )
         return T_DATE
 
+    date_str = parsed.strftime(STORED_FMT)
     ctx.user_data["t_date"] = date_str
-    await update.message.reply_text("Enter location (e.g. `SMU Sports Hall B`):", parse_mode="Markdown")
+    await update.message.reply_text(
+        f"Got it: *{md(date_str)}*\n\nEnter location (e.g. `SMU Sports Hall B`):",
+        parse_mode="Markdown",
+    )
     return T_LOC
 
 
-async def t_loc(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def t_loc(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     ctx.user_data["t_loc"] = sanitize_text(update.message.text, max_length=120)
     await update.message.reply_text("Enter focus (e.g. `Technique / Comp Prep`):", parse_mode="Markdown")
     return T_FOCUS
 
 
-async def t_focus(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def t_focus(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     focus = sanitize_text(update.message.text, max_length=160)
     date_str = ctx.user_data["t_date"]
     location = ctx.user_data["t_loc"]
@@ -76,10 +92,11 @@ async def t_focus(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown",
     )
 
+    _clear_training_data(ctx)
     return ConversationHandler.END
 
 
-async def here_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def here_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     today = now_local().strftime("%Y-%m-%d")
     trainings = [training for training in get_trainings(update.effective_chat.id) if training["date"].startswith(today)]
     if not trainings:
@@ -94,7 +111,7 @@ async def here_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"You're already marked present for {latest['date']}.")
 
 
-async def list_training(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def list_training(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     trainings = get_trainings(update.effective_chat.id)
     if not trainings:
         await update.message.reply_text("No training sessions scheduled.")
@@ -106,11 +123,13 @@ async def list_training(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 
-async def cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    _clear_training_data(ctx)
     await update.message.reply_text("Cancelled.")
     return ConversationHandler.END
 
 
+# Flow: DATE -> LOCATION -> FOCUS
 training_conv = ConversationHandler(
     entry_points=[CommandHandler("addtraining", add_training_start)],
     states={

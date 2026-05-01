@@ -9,7 +9,7 @@ def get_conn():
     return conn
 
 def _column_exists(conn, table_name, column_name):
-    columns = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+    columns = conn.execute("SELECT name FROM pragma_table_info(?)", (table_name,)).fetchall()
     return any(column["name"] == column_name for column in columns)
 
 def init_db():

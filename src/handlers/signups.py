@@ -1,5 +1,6 @@
 import json
 import logging
+from typing import Any
 
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -18,7 +19,7 @@ from src.views.templates import format_signup_card, format_signup_summary
 logger = logging.getLogger(__name__)
 
 
-def _option_from_callback(sheet, token):
+def _option_from_callback(sheet: Any, token: str) -> str | None:
     options = json.loads(sheet["options"])
 
     try:
@@ -30,11 +31,11 @@ def _option_from_callback(sheet, token):
         return None
 
 
-def _can_manage_sheet(sheet, user_id):
+def _can_manage_sheet(sheet: Any, user_id: int) -> bool:
     return is_admin(user_id) or sheet["created_by"] == user_id
 
 
-def _keyboard_for_sheet(sheet, options, management=True):
+def _keyboard_for_sheet(sheet: Any, options: list[str], management: bool = True) -> Any:
     is_poll = sheet["entity_type"] == "poll"
     return get_signup_keyboard(
         sheet["id"],
@@ -46,7 +47,100 @@ def _keyboard_for_sheet(sheet, options, management=True):
     )
 
 
-async def handle_signup_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def _handle_signup(query: Any, sheet: Any, sheet_id: int, data: list[str]) -> None:
+    if sheet["is_closed"]:
+        await query.answer("Sorry, this sign-up is closed.")
+        return
+    if len(data) < 3:
+        await query.answer("Invalid sign-up option.", show_alert=True)
+        return
+
+    option = _option_from_callback(sheet, data[2])
+    if option is None:
+        await query.answer("That option is no longer available.", show_alert=True)
+        return
+
+    user = query.from_user
+    action_result, option_label = toggle_signup(sheet_id, user.id, user.first_name, option)
+    toast = (
+        f"Signed up: {option_label}"
+        if action_result == "added"
+        else f"Removed: {option_label}"
+    )
+    await query.answer(toast)
+
+    options = json.loads(sheet["options"])
+    new_text = format_signup_card(sheet_id, sheet["title"], sheet["details"], options)
+
+    try:
+        await query.edit_message_text(
+            text=new_text,
+            reply_markup=_keyboard_for_sheet(sheet, options, management=query.message is not None),
+            parse_mode="Markdown",
+        )
+    except Exception:
+        logger.exception("Failed to refresh signup sheet %s", sheet_id)
+
+
+async def _handle_close(query: Any, sheet: Any, sheet_id: int) -> None:
+    if not _can_manage_sheet(sheet, query.from_user.id):
+        await query.answer("Only admins or the poll owner can close this.", show_alert=True)
+        return
+
+    close_signup_sheet(sheet_id)
+    await query.answer("Sign-up closed.")
+
+    options = json.loads(sheet["options"])
+    final_text = format_signup_summary(sheet_id, sheet["title"], sheet["details"], options)
+    await query.edit_message_text(
+        text=f"*CLOSED*\n\n{final_text}",
+        reply_markup=get_signup_keyboard(
+            sheet_id,
+            options,
+            include_close=True,
+            include_delete=sheet["entity_type"] == "poll",
+            is_closed=True,
+            publish_query=str(sheet_id) if sheet["entity_type"] == "poll" else None,
+        ),
+        parse_mode="Markdown",
+    )
+
+
+async def _handle_reopen(query: Any, sheet: Any, sheet_id: int) -> None:
+    if not _can_manage_sheet(sheet, query.from_user.id):
+        await query.answer("Only admins or the poll owner can reopen this.", show_alert=True)
+        return
+
+    reopen_signup_sheet(sheet_id)
+    await query.answer("Sign-up reopened.")
+
+    options = json.loads(sheet["options"])
+    final_text = format_signup_card(sheet_id, sheet["title"], sheet["details"], options)
+    await query.edit_message_text(
+        text=final_text,
+        reply_markup=get_signup_keyboard(
+            sheet_id,
+            options,
+            include_close=True,
+            include_delete=sheet["entity_type"] == "poll",
+            is_closed=False,
+            publish_query=str(sheet_id) if sheet["entity_type"] == "poll" else None,
+        ),
+        parse_mode="Markdown",
+    )
+
+
+async def _handle_delete(query: Any, sheet: Any, sheet_id: int) -> None:
+    if sheet["entity_type"] != "poll" or not _can_manage_sheet(sheet, query.from_user.id):
+        await query.answer("Only the poll owner or admins can delete this poll.", show_alert=True)
+        return
+
+    delete_signup_sheet(sheet_id)
+    await query.answer("Poll deleted.")
+    await query.edit_message_text(text="This poll has been deleted.")
+
+
+async def handle_signup_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     data = (query.data or "").split(":", 2)
 
@@ -67,85 +161,16 @@ async def handle_signup_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE)
         return
 
     if action == "signup":
-        if sheet["is_closed"]:
-            await query.answer("Sorry, this sign-up is closed.")
-            return
-        if len(data) < 3:
-            await query.answer("Invalid sign-up option.", show_alert=True)
-            return
-
-        option = _option_from_callback(sheet, data[2])
-        if option is None:
-            await query.answer("That option is no longer available.", show_alert=True)
-            return
-
-        user = query.from_user
-        toggle_signup(sheet_id, user.id, user.first_name, option)
-        await query.answer(f"Updated: {option}")
-
-        options = json.loads(sheet["options"])
-        new_text = format_signup_card(sheet_id, sheet["title"], sheet["details"], options)
-
-        try:
-            await query.edit_message_text(
-                text=new_text,
-                reply_markup=_keyboard_for_sheet(sheet, options, management=query.message is not None),
-                parse_mode="Markdown",
-            )
-        except Exception:
-            logger.exception("Failed to refresh signup sheet %s", sheet_id)
+        await _handle_signup(query, sheet, sheet_id, data)
 
     elif action == "close":
-        if not _can_manage_sheet(sheet, query.from_user.id):
-            await query.answer("Only admins or the poll owner can close this.", show_alert=True)
-            return
-
-        close_signup_sheet(sheet_id)
-        await query.answer("Sign-up closed.")
-
-        options = json.loads(sheet["options"])
-        final_text = format_signup_summary(sheet_id, sheet["title"], sheet["details"], options)
-        await query.edit_message_text(
-            text=f"*CLOSED*\n\n{final_text}",
-            reply_markup=get_signup_keyboard(
-                sheet_id,
-                options,
-                include_close=True,
-                include_delete=sheet["entity_type"] == "poll",
-                is_closed=True,
-                publish_query=str(sheet_id) if sheet["entity_type"] == "poll" else None,
-            ),
-            parse_mode="Markdown",
-        )
+        await _handle_close(query, sheet, sheet_id)
 
     elif action == "reopen":
-        if not _can_manage_sheet(sheet, query.from_user.id):
-            await query.answer("Only admins or the poll owner can reopen this.", show_alert=True)
-            return
-
-        reopen_signup_sheet(sheet_id)
-        await query.answer("Sign-up reopened.")
-
-        options = json.loads(sheet["options"])
-        final_text = format_signup_card(sheet_id, sheet["title"], sheet["details"], options)
-        await query.edit_message_text(
-            text=final_text,
-            reply_markup=get_signup_keyboard(
-                sheet_id,
-                options,
-                include_close=True,
-                include_delete=sheet["entity_type"] == "poll",
-                is_closed=False,
-                publish_query=str(sheet_id) if sheet["entity_type"] == "poll" else None,
-            ),
-            parse_mode="Markdown",
-        )
+        await _handle_reopen(query, sheet, sheet_id)
 
     elif action == "delete":
-        if sheet["entity_type"] != "poll" or not _can_manage_sheet(sheet, query.from_user.id):
-            await query.answer("Only the poll owner or admins can delete this poll.", show_alert=True)
-            return
+        await _handle_delete(query, sheet, sheet_id)
 
-        delete_signup_sheet(sheet_id)
-        await query.answer("Poll deleted.")
-        await query.edit_message_text(text="This poll has been deleted.")
+    else:
+        await query.answer("Invalid sign-up action.", show_alert=True)

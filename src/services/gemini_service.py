@@ -1,3 +1,4 @@
+import logging
 import os
 
 import google.generativeai as genai
@@ -5,6 +6,7 @@ import google.generativeai as genai
 from src.database import get_competitions, get_events, get_milestones, get_pairings, get_tasks, get_trainings
 from src.utils.time import now_local_str
 
+logger = logging.getLogger(__name__)
 _model = None
 
 
@@ -79,5 +81,6 @@ Partners: {pair_lines}
     try:
         response = await model.generate_content_async(prompt)
         return response.text or "I could not generate a response for that."
-    except Exception as exc:
-        return f"Gemini error: {exc}"
+    except Exception:
+        logger.exception("Gemini request failed")
+        return "Sorry, I couldn't reach the AI service right now. Please try again later."

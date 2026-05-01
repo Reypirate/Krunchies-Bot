@@ -2,3 +2,5 @@ python-telegram-bot>=22.7,<23
 google-generativeai==0.5.4
 apscheduler==3.10.4
 python-dotenv==1.0.1
+# Natural-language date parsing for task/event/training/competition/production prompts.
+dateparser>=1.2.0,<2

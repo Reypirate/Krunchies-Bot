@@ -1,55 +1,55 @@
 # Krunchies Bot
 
-Telegram bot for club operations, training sign-ups, custom named polls, task tracking, reminders, partner logging, production milestones, announcements, and Gemini-powered assistance.
+Krunchies Bot is a Telegram group-management bot for SMU Ardiente club operations. It supports named sign-ups, custom polls, task tracking, reminders, attendance, pairings, production milestones, announcements, and a Gemini-powered assistant that can answer from current club data.
 
 ## Features
 
-- Training, event, and competition sign-up cards with live named lists.
-- Custom named polls via `/newpoll`.
-- Inline poll publishing support when inline mode is enabled in BotFather.
-- Admin-only training, event, competition, milestone, partner, and announcement workflows.
-- Task management with 24-hour and 1-hour reminders.
-- Event reminders with 24-hour and 1-hour notifications.
-- Attendance check-in for same-day training via `/here`.
-- Chat allowlisting and admin authorization through environment variables.
-- SQLite persistence with optional configurable database path.
-- Gemini assistant that answers from current bot data.
+- Training, event, competition, and custom poll sign-up cards with live named lists.
+- Single-choice sign-ups for training, events, and custom polls.
+- Multi-choice competition sign-ups.
+- Natural-language date input for tasks, training, events, competitions, and production milestones.
+- Task and event reminders at about 24 hours and 1 hour before the stored datetime.
+- Attendance check-in for same-day training sessions with `/here`.
+- Admin-only workflows for club operations.
+- Chat allowlisting and bootstrap admin authorization through environment variables.
+- SQLite persistence with a configurable database path.
+- Gemini assistant with current bot data injected as context.
 
 ## Tech Stack
 
-- Python 3.10+
-- `python-telegram-bot`
+- Python 3.11+
+- `python-telegram-bot` v22
 - SQLite
 - APScheduler
 - Google Gemini API
+- `dateparser`
 - `python-dotenv`
 
-## Project Structure
+## Repository Layout
 
 ```text
 Krunchies-Bot/
-├── src/
-│   ├── main.py
-│   ├── database/
-│   │   ├── connection.py
-│   │   └── repos/
-│   ├── handlers/
-│   ├── services/
-│   ├── utils/
-│   └── views/
-├── .env.example
-├── .gitignore
-├── Procfile
-├── README.md
-└── requirements.txt
+|-- src/
+|   |-- main.py                  # App bootstrap, handler registration, scheduler startup
+|   |-- database/
+|   |   |-- connection.py         # SQLite connection and schema initialization
+|   |   `-- repos/                # Data-access functions
+|   |-- handlers/                 # Telegram command, conversation, and callback handlers
+|   |-- services/                 # Scheduler and Gemini service wrappers
+|   |-- utils/                    # Formatting, security, and time helpers
+|   `-- views/                    # Inline keyboards and message templates
+|-- .env.example
+|-- Procfile
+|-- requirements.txt
+`-- README.md
 ```
 
-## Prerequisites
+## Requirements
 
-- Python 3.10 or newer.
-- Telegram bot token from BotFather.
-- Gemini API key from Google AI Studio.
-- Optional: inline mode enabled in BotFather if you want the `Publish poll` button to work.
+- Python 3.11 or newer.
+- A Telegram bot token from BotFather.
+- A Google AI Studio Gemini API key if you want the AI assistant enabled.
+- Optional: inline mode enabled in BotFather if you want poll publishing from inline results.
 
 ## Setup
 
@@ -66,22 +66,22 @@ Install dependencies:
 pip install -r requirements.txt
 ```
 
-Create `.env` from the example:
+Create a local environment file:
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-Fill in the values in `.env`. Do not commit `.env`.
+Fill in `.env`. Never commit real secrets or production database files.
 
 ## Environment Variables
 
 | Variable | Required | Description |
 | --- | --- | --- |
 | `BOT_TOKEN` | Yes | Telegram bot token from BotFather. |
-| `GEMINI_API_KEY` | Yes, for AI | Google Gemini API key. |
+| `GEMINI_API_KEY` | For AI | Google Gemini API key. The bot still runs without it, but AI replies are disabled. |
 | `GEMINI_MODEL` | No | Gemini model name. Defaults to `gemini-1.5-flash`. |
-| `BOT_TIMEZONE` | No | Timezone for reminders. Defaults to `Asia/Singapore`. |
+| `BOT_TIMEZONE` | No | IANA timezone for parsing dates and reminders. Defaults to `Asia/Singapore`. |
 | `DB_PATH` | No | SQLite database path. Defaults to `club.db`. |
 | `ALLOWED_CHAT_IDS` | Recommended | Comma-separated Telegram chat IDs allowed to use the bot. |
 | `ADMIN_IDS` | Recommended | Comma-separated Telegram user IDs with admin privileges. |
@@ -92,7 +92,22 @@ Fill in the values in `.env`. Do not commit `.env`.
 python -m src.main
 ```
 
-If you see a Telegram `409 Conflict`, another instance of the same bot token is already running. Stop the deployed worker or the other local process before starting this one.
+Only one process can poll Telegram for the same bot token. If you see a `409 Conflict`, stop the deployed worker or any other local process using that token.
+
+## Date Input
+
+Date prompts accept natural language and strict datetime strings. The bot parses dates in `BOT_TIMEZONE`, requires future dates for new records, and stores accepted values as `YYYY-MM-DD HH:MM`.
+
+Examples:
+
+```text
+next wednesday 7pm
+15 june 6pm
+tomorrow 18:00
+2026-06-15 18:00
+```
+
+This applies to `/addtask`, `/addtraining`, `/addevent`, `/addcomp`, and `/addmilestone Title | date/time`.
 
 ## Command Reference
 
@@ -100,14 +115,14 @@ If you see a Telegram `409 Conflict`, another instance of the same bot token is 
 
 | Command | Access | Description |
 | --- | --- | --- |
-| `/start` | All | Register user and show welcome message. |
+| `/start` | All | Register the user and show a welcome message. |
 | `/help` | All | Show command help. |
 
 ### Tasks
 
 | Command | Access | Description |
 | --- | --- | --- |
-| `/addtask` | All | Create a task with title, description, deadline, and assignee. |
+| `/addtask` | All | Create a task with title, description, deadline, and optional assignee. |
 | `/tasks` | All | List pending tasks in the current chat. |
 | `/mytasks` | All | List tasks assigned to your Telegram username. |
 | `/done <id>` | All | Mark a task as done. |
@@ -124,12 +139,12 @@ If you see a Telegram `409 Conflict`, another instance of the same bot token is 
 | `/events` | All | List upcoming events. |
 | `/deleteevent <id>` | Admin | Delete an event and close its linked sign-up sheet. |
 
-### Custom Polls
+### Polls
 
 | Command | Access | Description |
 | --- | --- | --- |
 | `/newpoll` | All | Create a custom named poll with up to 10 options. |
-| `/done` | Poll creator flow | Finish and publish a poll while creating it. |
+| `/done` | Poll creation flow | Finish and publish a poll while creating it. |
 | `/polls` | Poll creator | List your custom polls. |
 | `/viewpoll <id>` | Poll owner or admin | Repost a poll management card. |
 | `/headcount <id>` | Chat members | Show a summary for a sign-up sheet or poll. |
@@ -148,8 +163,15 @@ If you see a Telegram `409 Conflict`, another instance of the same bot token is 
 | Command | Access | Description |
 | --- | --- | --- |
 | `/prodstatus` | All | Show production milestones. |
-| `/addmilestone Title \| YYYY-MM-DD` | Admin | Add a production milestone. |
+| `/addmilestone Title \| date/time` | Admin | Add a production milestone with a natural-language or strict datetime deadline. |
 | `/announce <message>` | Admin | Send a formatted announcement. |
+
+## Sign-up Behavior
+
+- Training, events, and custom polls are single-choice: tapping a new option moves the user from their previous option.
+- Competitions are multi-choice: each style option is toggled independently.
+- Inline callback data uses option indexes to stay within Telegram's 64-byte callback limit.
+- Poll owners and admins can close, reopen, publish, or delete custom polls.
 
 ## Custom Poll Workflow
 
@@ -160,16 +182,7 @@ If you see a Telegram `409 Conflict`, another instance of the same bot token is 
 5. Members tap buttons to add or remove their names.
 6. The poll owner or an admin can close, reopen, publish, or delete the poll.
 
-For inline publishing, enable inline mode for the bot in BotFather. Then use the `Publish poll` button or type the bot username in another chat and choose the poll result.
-
-## Security
-
-- `.env` is ignored by git and must never be committed.
-- `club.db` is ignored by git because it can contain member and event data.
-- `__pycache__` and `*.pyc` files are ignored.
-- Use `ALLOWED_CHAT_IDS` to prevent random chats from using the bot.
-- Use `ADMIN_IDS` for bootstrap admin access.
-- If a bot token is ever pasted in logs or chat, revoke and rotate it in BotFather.
+For inline publishing, enable inline mode in BotFather. Then use the `Publish poll` button or type the bot username in another chat and choose the poll result.
 
 ## Deployment
 
@@ -179,42 +192,51 @@ The included `Procfile` starts the bot as a worker:
 worker: python -m src.main
 ```
 
-Only one running instance may poll Telegram for a given bot token. If you run the bot locally while it is deployed, stop the deployed worker first or use a separate test bot token.
-
-SQLite persistence depends on where the bot is hosted. On ephemeral platforms, configure `DB_PATH` to point at a persistent volume or migrate to a managed database before production use.
+SQLite persistence depends on the host. On ephemeral platforms, set `DB_PATH` to a persistent volume or migrate to a managed database before production use.
 
 ## Development Checks
 
-Before committing:
+Before committing, run:
 
 ```powershell
 python -m compileall -q src
-git status --short --ignored
-git check-ignore -v .env club.db src\__pycache__
+git diff --check
+git status --short
 ```
 
-Optional manual smoke test:
+Suggested manual smoke test:
 
-```powershell
-python -m src.main
+```text
+/help
+/newpoll
+/addtask
+/addtraining
+/headcount <id>
 ```
 
-Then try `/help`, `/newpoll`, `/addtraining`, and `/headcount <id>` in Telegram.
+## Security Notes
+
+- `.env` must remain untracked.
+- `club.db` may contain member, chat, and event data; keep it out of git.
+- Use `ALLOWED_CHAT_IDS` to restrict where the bot responds.
+- Use `ADMIN_IDS` for bootstrap admin access.
+- Rotate `BOT_TOKEN` immediately if it appears in logs, screenshots, commits, or chat.
+- Run only one polling worker per Telegram bot token.
 
 ## Troubleshooting
 
 ### `409 Conflict`
 
-Another copy of the same bot is already running. Stop the other local process or deployed worker.
+Another process is polling Telegram with the same token. Stop the other process or use a separate test bot token.
 
-### Bot ignores your private messages
+### Bot ignores a chat
 
-If `ALLOWED_CHAT_IDS` is set, private chats are restricted. Admin users listed in `ADMIN_IDS` can still use private chat commands.
+If `ALLOWED_CHAT_IDS` is set, the current chat ID must be listed. Admin users in `ADMIN_IDS` can still use private chat commands.
 
 ### Inline publish does not appear
 
 Enable inline mode for the bot in BotFather.
 
-### Gemini says the API key is not configured
+### AI replies are disabled
 
-Check `GEMINI_API_KEY` in `.env`, then restart the bot.
+Set `GEMINI_API_KEY` in `.env`, confirm `GEMINI_MODEL` if customized, and restart the bot.
